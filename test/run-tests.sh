@@ -86,7 +86,7 @@ required_options=(
 )
 
 for option in "${required_options[@]}"; do
-    if grep -q "^\s*$option\s*=" module.nix; then
+    if grep -q "^[ 	]*$option[ 	]*=" module.nix; then
         test_result 0 "Option '$option' defined"
     else
         test_result 1 "Option '$option' defined"

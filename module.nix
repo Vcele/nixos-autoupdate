@@ -270,11 +270,11 @@ in
       wakeupScript = pkgs.writeShellScript "setup-wakeup" ''
         # Calculate seconds until next wakeup time
         current_time=$(date +%s)
-        wakeup_time=$(date -d "${cfg.wakeup.wakeupTime}" +%s)
+        wakeup_time=$(date -d "${cfg.wakeup.wakeupTime}" +%s 2>/dev/null || echo 0)
         
-        # If wakeup time is in the past today, schedule for tomorrow
+        # If wakeup time is in the past today or invalid, schedule for tomorrow
         if [ $wakeup_time -le $current_time ]; then
-          wakeup_time=$(date -d "tomorrow ${cfg.wakeup.wakeupTime}" +%s)
+          wakeup_time=$(date -d "+1 day ${cfg.wakeup.wakeupTime}" +%s 2>/dev/null || date -d "tomorrow ${cfg.wakeup.wakeupTime}" +%s)
         fi
         
         seconds_until_wakeup=$((wakeup_time - current_time))
@@ -370,10 +370,10 @@ in
           })
 
           # Add git dirty check unless allowDirty is true or using local flake
-          (mkIf (!cfg.allowDirty && !cfg.localFlake) {
+          (mkIf (!cfg.allowDirty && !cfg.localFlake && flakeSource != null) {
             preStart = mkBefore ''
               # Skip dirty check for local flakes
-              if [ -n "${flakeSource or ""}" ] && [[ ! "${flakeSource or ""}" =~ ^(path:|/) ]]; then
+              if [[ ! "${flakeSource}" =~ ^(path:|/) ]]; then
                 # This is a remote flake, check if it's dirty
                 # Note: This check is basic and may need adjustment based on your setup
                 echo "Checking for clean git state..."
@@ -436,11 +436,11 @@ in
           };
         };
 
-        # Create a marker file when woken by RTC
+        # Create a marker file when resuming from suspend
         systemd.services.nixos-upgrade-wakeup-marker = {
           description = "Mark that system was woken by autoupdate";
-          after = [ "suspend.target" ];
-          wantedBy = [ "suspend.target" ];
+          after = [ "sleep.target" ];
+          wantedBy = [ "sleep.target" ];
           
           serviceConfig = {
             Type = "oneshot";
