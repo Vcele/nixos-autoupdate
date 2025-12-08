@@ -1,0 +1,21 @@
+# Nix
+result
+result-*
+
+# Temporary files
+*.backup
+*-old.md
+
+# Build artifacts
+.direnv/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
