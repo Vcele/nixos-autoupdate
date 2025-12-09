@@ -131,17 +131,19 @@ in
         default = false;
         description = ''
           Enable wake-up functionality for laptops that are normally in sleep mode.
-          Uses RTC wake alarm to wake the system before the scheduled update.
+          When enabled, the system will wake at wakeupTime and immediately start the update.
+          The schedule option is ignored when wakeup is enabled.
         '';
       };
 
       wakeupTime = mkOption {
         type = types.str;
-        default = "03:55";
-        example = "03:55";
+        default = "04:00";
+        example = "04:00";
         description = ''
-          Time to wake up the system (5 minutes before the scheduled update by default).
+          Time to wake up the system and run the update.
           Format: HH:MM in 24-hour format.
+          This becomes the effective update time when wakeup is enabled.
         '';
       };
 
@@ -342,12 +344,13 @@ in
         ];
 
         # Configure automatic system updates
+        # When wakeup is enabled, the timer is disabled since wake-up triggers the update
         system.autoUpgrade = {
           enable = true;
           flake = flakeSource;
           flags = cfg.flags;
           randomizedDelaySec = cfg.randomizedDelaySec;
-          dates = cfg.schedule;
+          dates = if cfg.wakeup.enable then "" else cfg.schedule;
         };
 
         # Install required packages for notifications
@@ -482,65 +485,22 @@ in
           };
         };
 
-        # Create a marker file when resuming from suspend and trigger update if appropriate
+        # Create a service that triggers on resume and starts the update immediately
         systemd.services.nixos-upgrade-wakeup-marker = {
-          description = "Mark that system was woken by autoupdate and trigger update";
+          description = "Trigger update after system wake-up";
           after = [ "sleep.target" "suspend.target" "hibernate.target" ];
           wantedBy = [ "sleep.target" "suspend.target" "hibernate.target" ];
           
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = pkgs.writeShellScript "wakeup-marker-and-trigger" ''
+            ExecStart = pkgs.writeShellScript "wakeup-and-upgrade" ''
               # Mark that we woke up
               mkdir -p /var/lib/nixos-autoupdate
               touch /var/lib/nixos-autoupdate/wakeup-triggered
               
-              # Check if it's time to run the update (within the schedule window)
-              current_hour=$(date +%H)
-              current_minute=$(date +%M)
-              
-              # Parse the scheduled time (assumes HH:MM format or similar)
-              scheduled_time="${cfg.schedule}"
-              
-              # If schedule looks like a time (e.g., "04:00"), check if we're close to it
-              # Use case statement for POSIX compatibility instead of bash regex
-              case "$scheduled_time" in
-                [0-9][0-9]:[0-9][0-9])
-                  # Extract hour and minute
-                  scheduled_hour=''${scheduled_time%%:*}
-                  scheduled_minute=''${scheduled_time##*:}
-                  
-                  # Remove leading zeros safely - if value is just "0", keep it, otherwise strip leading 0
-                  scheduled_hour=''${scheduled_hour#0}
-                  scheduled_minute=''${scheduled_minute#0}
-                  current_hour=''${current_hour#0}
-                  current_minute=''${current_minute#0}
-                  
-                  # Default to 0 if empty after stripping
-                  scheduled_hour=''${scheduled_hour:-0}
-                  scheduled_minute=''${scheduled_minute:-0}
-                  current_hour=''${current_hour:-0}
-                  current_minute=''${current_minute:-0}
-                  
-                  # Calculate time difference (simple check: within 30 minutes after scheduled time)
-                  current_total=$((current_hour * 60 + current_minute))
-                  scheduled_total=$((scheduled_hour * 60 + scheduled_minute))
-                  diff=$((current_total - scheduled_total))
-                  
-                  # If we're within -5 to +30 minutes of scheduled time, trigger the update
-                  if [ $diff -ge -5 ] && [ $diff -le 30 ]; then
-                    echo "Woke up at appropriate time for update, triggering nixos-upgrade.service..."
-                    systemctl start nixos-upgrade.service || true
-                  else
-                    echo "Woke up but not within update time window (diff: $diff minutes)"
-                  fi
-                  ;;
-                *)
-                  # For other schedule formats (daily, weekly, etc.), just trigger the service
-                  echo "Non-time schedule format, triggering nixos-upgrade.service after wake..."
-                  systemctl start nixos-upgrade.service || true
-                  ;;
-              esac
+              # Simply trigger the upgrade service immediately
+              echo "System woken up, starting nixos-upgrade.service..."
+              systemctl start nixos-upgrade.service || true
             '';
           };
         };
