@@ -97,7 +97,7 @@ in
     # option to set CPU scheduling policy
     cpuSchedulingPolicy = mkOption {
       type = types.str;
-      default = "idle";
+      default = "batch";
       example = "batch";
       description = "CPU scheduling policy for the update process";
     };
@@ -105,7 +105,7 @@ in
     # option to set IO scheduling class
     ioSchedulingClass = mkOption {
       type = types.str;
-      default = "idle";
+      default = "best-effort";
       example = "best-effort";
       description = "IO scheduling class for the update process";
     };
@@ -368,6 +368,10 @@ in
             startLimitIntervalSec = 120;
             startLimitBurst = 6;
 
+            # Network dependency for updating inputs
+            wants = [ "network-online.target" ];
+            after = [ "network-online.target" ];
+
             serviceConfig = {
               Restart = "on-failure";
               RestartSec = "20";
@@ -507,7 +511,7 @@ in
 
       # Notification on user login
       (mkIf cfg.notification.enable {
-        # Create a user service that runs on graphical login
+        # Create a user service that runs on graphical login and checks for pending notifications
         systemd.user.services.nixos-autoupdate-notify = {
           description = "Show NixOS auto-update notification on login";
           wantedBy = [ "graphical-session.target" ];
@@ -549,6 +553,17 @@ in
                 fi
               fi
             '';
+          };
+        };
+
+        # Create a user timer that checks for notifications periodically (useful for screen unlock)
+        systemd.user.timers.nixos-autoupdate-notify = {
+          description = "Check for NixOS auto-update notifications periodically";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnStartupSec = "30s";
+            OnUnitActiveSec = "5m";
+            Unit = "nixos-autoupdate-notify.service";
           };
         };
 
