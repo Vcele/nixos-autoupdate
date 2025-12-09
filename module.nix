@@ -205,7 +205,7 @@ in
       # Check if sops is needed
       needsSops = usesSSH && cfg.sshKeySops != null;
 
-      # Notification script
+      # Notification script for successful updates
       notificationScript = pkgs.writeShellScript "autoupdate-notify" ''
         # Get all active user sessions
         for user_session in $(${pkgs.systemd}/bin/loginctl list-sessions --no-legend | ${pkgs.gawk}/bin/awk '{print $1}'); do
@@ -229,6 +229,34 @@ in
               --app-name="NixOS Auto-Update" \
               "System Update Complete" \
               "Your system was automatically updated. The update completed successfully at $(date '+%Y-%m-%d %H:%M')."
+          fi
+        done
+      '';
+
+      # Notification script for failed updates
+      failureNotificationScript = pkgs.writeShellScript "autoupdate-notify-failure" ''
+        # Get all active user sessions
+        for user_session in $(${pkgs.systemd}/bin/loginctl list-sessions --no-legend | ${pkgs.gawk}/bin/awk '{print $1}'); do
+          user=$(${pkgs.systemd}/bin/loginctl show-session "$user_session" -p Name --value)
+          display=$(${pkgs.systemd}/bin/loginctl show-session "$user_session" -p Display --value)
+          
+          # Skip if no display (non-graphical session)
+          [ -z "$display" ] && continue
+          
+          # Get user's runtime directory
+          user_runtime_dir="/run/user/$(${pkgs.coreutils}/bin/id -u "$user")"
+          
+          # Send notification if DBUS_SESSION_BUS_ADDRESS exists
+          if [ -d "$user_runtime_dir" ]; then
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$user_runtime_dir/bus"
+            export DISPLAY="$display"
+            
+            ${pkgs.sudo}/bin/sudo -u "$user" ${pkgs.libnotify}/bin/notify-send \
+              --urgency="critical" \
+              --expire-time="${toString cfg.notification.timeout}" \
+              --app-name="NixOS Auto-Update" \
+              "System Update Failed" \
+              "The automatic system update failed at $(date '+%Y-%m-%d %H:%M'). Please check the logs with: journalctl -u nixos-upgrade.service"
           fi
         done
       '';
@@ -354,6 +382,14 @@ in
             };
           }
 
+          # Add systemd inhibit lock when wakeup is enabled to prevent sleep during update
+          (mkIf cfg.wakeup.enable {
+            serviceConfig = {
+              # Acquire inhibit lock to prevent system from sleeping during update
+              ExecStartPre = "${pkgs.systemd}/bin/systemd-inhibit --what=sleep --who=nixos-upgrade --why='System update in progress' --mode=block ${pkgs.coreutils}/bin/true";
+            };
+          })
+
           # Add SSH configuration only if using SSH
           (mkIf (usesSSH && needsSops) {
             environment = {
@@ -389,26 +425,36 @@ in
             '';
           })
 
-          # Add post-update notification
+          # Add post-update notification and handling for both success and failure
           (mkIf cfg.notification.enable {
             postStop = ''
-              # Only send notification on successful completion
+              # Handle both successful and failed updates
               if [ "$SERVICE_RESULT" = "success" ] || [ -z "$SERVICE_RESULT" ]; then
                 echo "Update completed successfully, creating notification flag..."
                 mkdir -p /var/lib/nixos-autoupdate
                 echo "$(date -Iseconds)" > /var/lib/nixos-autoupdate/last-update
+                echo "success" > /var/lib/nixos-autoupdate/last-result
                 
                 # Try to send notification immediately if users are logged in
                 ${notificationScript} || true
+              else
+                echo "Update failed, creating failure notification flag..."
+                mkdir -p /var/lib/nixos-autoupdate
+                echo "$(date -Iseconds)" > /var/lib/nixos-autoupdate/last-update
+                echo "failure" > /var/lib/nixos-autoupdate/last-result
+                
+                # Try to send failure notification immediately if users are logged in
+                ${failureNotificationScript} || true
               fi
             '';
           })
 
-          # Add auto-suspend after update if wakeup is enabled
+          # Add auto-suspend after update if wakeup is enabled (for both success and failure)
           (mkIf (cfg.wakeup.enable && cfg.wakeup.autoSuspendAfter) {
             postStop = mkAfter ''
-              # Check if we should auto-suspend
-              if [ "$SERVICE_RESULT" = "success" ] && [ -f /var/lib/nixos-autoupdate/wakeup-triggered ]; then
+              # Check if we should auto-suspend (both on success and failure)
+              if [ -f /var/lib/nixos-autoupdate/wakeup-triggered ]; then
+                echo "Update completed (success or failure), checking if we should auto-suspend..."
                 rm /var/lib/nixos-autoupdate/wakeup-triggered
                 ${autoSuspendScript}
               fi
@@ -436,15 +482,55 @@ in
           };
         };
 
-        # Create a marker file when resuming from suspend
+        # Create a marker file when resuming from suspend and trigger update if appropriate
         systemd.services.nixos-upgrade-wakeup-marker = {
-          description = "Mark that system was woken by autoupdate";
-          after = [ "sleep.target" ];
-          wantedBy = [ "sleep.target" ];
+          description = "Mark that system was woken by autoupdate and trigger update";
+          after = [ "sleep.target" "suspend.target" "hibernate.target" ];
+          wantedBy = [ "sleep.target" "suspend.target" "hibernate.target" ];
           
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = "${pkgs.coreutils}/bin/mkdir -p /var/lib/nixos-autoupdate && ${pkgs.coreutils}/bin/touch /var/lib/nixos-autoupdate/wakeup-triggered";
+            ExecStart = pkgs.writeShellScript "wakeup-marker-and-trigger" ''
+              # Mark that we woke up
+              mkdir -p /var/lib/nixos-autoupdate
+              touch /var/lib/nixos-autoupdate/wakeup-triggered
+              
+              # Check if it's time to run the update (within the schedule window)
+              current_hour=$(date +%H)
+              current_minute=$(date +%M)
+              
+              # Parse the scheduled time (assumes HH:MM format or similar)
+              scheduled_time="${cfg.schedule}"
+              
+              # If schedule looks like a time (e.g., "04:00"), check if we're close to it
+              if [[ "$scheduled_time" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+                scheduled_hour=''${scheduled_time%%:*}
+                scheduled_minute=''${scheduled_time##*:}
+                
+                # Remove leading zeros for comparison
+                scheduled_hour=$((10#$scheduled_hour))
+                scheduled_minute=$((10#$scheduled_minute))
+                current_hour=$((10#$current_hour))
+                current_minute=$((10#$current_minute))
+                
+                # Calculate time difference (simple check: within 30 minutes after scheduled time)
+                current_total=$((current_hour * 60 + current_minute))
+                scheduled_total=$((scheduled_hour * 60 + scheduled_minute))
+                diff=$((current_total - scheduled_total))
+                
+                # If we're within -5 to +30 minutes of scheduled time, trigger the update
+                if [ $diff -ge -5 ] && [ $diff -le 30 ]; then
+                  echo "Woke up at appropriate time for update, triggering nixos-upgrade.service..."
+                  systemctl start nixos-upgrade.service || true
+                else
+                  echo "Woke up but not within update time window (diff: $diff minutes)"
+                fi
+              else
+                # For other schedule formats (daily, weekly, etc.), just trigger the service
+                echo "Non-time schedule format, triggering nixos-upgrade.service after wake..."
+                systemctl start nixos-upgrade.service || true
+              fi
+            '';
           };
         };
 
@@ -475,14 +561,29 @@ in
                 current_ts=$(date +%s)
                 age=$((current_ts - last_update_ts))
                 
+                # Check if there's a result file
+                result="success"
+                if [ -f /var/lib/nixos-autoupdate/last-result ]; then
+                  result=$(cat /var/lib/nixos-autoupdate/last-result)
+                fi
+                
                 # If update was within last 24 hours (86400 seconds), show notification
                 if [ $age -lt 86400 ] && [ $age -gt 0 ]; then
-                  ${pkgs.libnotify}/bin/notify-send \
-                    --urgency="${cfg.notification.urgency}" \
-                    --expire-time="${toString cfg.notification.timeout}" \
-                    --app-name="NixOS Auto-Update" \
-                    "System Update Complete" \
-                    "Your system was automatically updated. The update completed successfully at $(date -d "$last_update" '+%Y-%m-%d %H:%M')."
+                  if [ "$result" = "failure" ]; then
+                    ${pkgs.libnotify}/bin/notify-send \
+                      --urgency="critical" \
+                      --expire-time="${toString cfg.notification.timeout}" \
+                      --app-name="NixOS Auto-Update" \
+                      "System Update Failed" \
+                      "The automatic system update failed at $(date -d "$last_update" '+%Y-%m-%d %H:%M'). Please check the logs with: journalctl -u nixos-upgrade.service"
+                  else
+                    ${pkgs.libnotify}/bin/notify-send \
+                      --urgency="${cfg.notification.urgency}" \
+                      --expire-time="${toString cfg.notification.timeout}" \
+                      --app-name="NixOS Auto-Update" \
+                      "System Update Complete" \
+                      "Your system was automatically updated. The update completed successfully at $(date -d "$last_update" '+%Y-%m-%d %H:%M')."
+                  fi
                 fi
               fi
             '';
