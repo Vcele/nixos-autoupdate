@@ -503,33 +503,44 @@ in
               scheduled_time="${cfg.schedule}"
               
               # If schedule looks like a time (e.g., "04:00"), check if we're close to it
-              if [[ "$scheduled_time" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
-                scheduled_hour=''${scheduled_time%%:*}
-                scheduled_minute=''${scheduled_time##*:}
-                
-                # Remove leading zeros for comparison
-                scheduled_hour=$((10#$scheduled_hour))
-                scheduled_minute=$((10#$scheduled_minute))
-                current_hour=$((10#$current_hour))
-                current_minute=$((10#$current_minute))
-                
-                # Calculate time difference (simple check: within 30 minutes after scheduled time)
-                current_total=$((current_hour * 60 + current_minute))
-                scheduled_total=$((scheduled_hour * 60 + scheduled_minute))
-                diff=$((current_total - scheduled_total))
-                
-                # If we're within -5 to +30 minutes of scheduled time, trigger the update
-                if [ $diff -ge -5 ] && [ $diff -le 30 ]; then
-                  echo "Woke up at appropriate time for update, triggering nixos-upgrade.service..."
+              # Use case statement for POSIX compatibility instead of bash regex
+              case "$scheduled_time" in
+                [0-9][0-9]:[0-9][0-9])
+                  # Extract hour and minute
+                  scheduled_hour=''${scheduled_time%%:*}
+                  scheduled_minute=''${scheduled_time##*:}
+                  
+                  # Remove leading zeros safely - if value is just "0", keep it, otherwise strip leading 0
+                  scheduled_hour=''${scheduled_hour#0}
+                  scheduled_minute=''${scheduled_minute#0}
+                  current_hour=''${current_hour#0}
+                  current_minute=''${current_minute#0}
+                  
+                  # Default to 0 if empty after stripping
+                  scheduled_hour=''${scheduled_hour:-0}
+                  scheduled_minute=''${scheduled_minute:-0}
+                  current_hour=''${current_hour:-0}
+                  current_minute=''${current_minute:-0}
+                  
+                  # Calculate time difference (simple check: within 30 minutes after scheduled time)
+                  current_total=$((current_hour * 60 + current_minute))
+                  scheduled_total=$((scheduled_hour * 60 + scheduled_minute))
+                  diff=$((current_total - scheduled_total))
+                  
+                  # If we're within -5 to +30 minutes of scheduled time, trigger the update
+                  if [ $diff -ge -5 ] && [ $diff -le 30 ]; then
+                    echo "Woke up at appropriate time for update, triggering nixos-upgrade.service..."
+                    systemctl start nixos-upgrade.service || true
+                  else
+                    echo "Woke up but not within update time window (diff: $diff minutes)"
+                  fi
+                  ;;
+                *)
+                  # For other schedule formats (daily, weekly, etc.), just trigger the service
+                  echo "Non-time schedule format, triggering nixos-upgrade.service after wake..."
                   systemctl start nixos-upgrade.service || true
-                else
-                  echo "Woke up but not within update time window (diff: $diff minutes)"
-                fi
-              else
-                # For other schedule formats (daily, weekly, etc.), just trigger the service
-                echo "Non-time schedule format, triggering nixos-upgrade.service after wake..."
-                systemctl start nixos-upgrade.service || true
-              fi
+                  ;;
+              esac
             '';
           };
         };
