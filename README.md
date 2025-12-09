@@ -137,7 +137,6 @@ Update from your local system's flake configuration:
     # Wake up from sleep to perform updates
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";  # Wake 5 minutes before update
       autoSuspendAfter = true;  # Suspend again if no users logged in
     };
     
@@ -148,7 +147,7 @@ Update from your local system's flake configuration:
       timeout = 30000;  # 30 seconds
     };
     
-    schedule = "04:00";  # Update at 4 AM
+    schedule = "04:00";  # Wake up and update at 4 AM
   };
 }
 ```
@@ -171,7 +170,6 @@ Update from your local system's flake configuration:
     onlyOnACPower = true;
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";
       autoSuspendAfter = true;
     };
     
@@ -220,7 +218,6 @@ Update from your local system's flake configuration:
 |--------|------|---------|-------------|
 | `onlyOnACPower` | bool | `false` | Only update when connected to AC power |
 | `wakeup.enable` | bool | `false` | Enable wake-from-sleep for updates |
-| `wakeup.wakeupTime` | string | `"03:55"` | Time to wake up (HH:MM format) |
 | `wakeup.autoSuspendAfter` | bool | `true` | Suspend after update if no users logged in |
 
 ### Notification Options
@@ -342,7 +339,7 @@ Enable "Wake on RTC" or similar option in your BIOS/UEFI settings.
     
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";
+      # Wake-up time is set by schedule option
       autoSuspendAfter = true;
     };
     
@@ -617,7 +614,7 @@ The module uses standard systemd units, so you can add dependencies:
     onlyOnACPower = true;
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";
+      # Wake-up time is set by schedule option
       autoSuspendAfter = true;
     };
     notification = {

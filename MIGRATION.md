@@ -123,7 +123,6 @@ You can now use these new options:
     # Wake-up configuration
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";
       autoSuspendAfter = true;
     };
     
@@ -223,7 +222,6 @@ The migration is fully backward compatible:
     onlyOnACPower = true;
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";
       autoSuspendAfter = true;
     };
     notification = {

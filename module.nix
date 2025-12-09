@@ -88,7 +88,10 @@ in
       type = types.str;
       default = "daily";
       example = "04:00";
-      description = "When to run automatic updates (systemd timer format)";
+      description = ''
+        When to run automatic updates (systemd timer format).
+        When wakeup is enabled, this is also the time the system will wake up to perform the update.
+      '';
     };
 
     # option to set CPU scheduling policy
@@ -131,19 +134,7 @@ in
         default = false;
         description = ''
           Enable wake-up functionality for laptops that are normally in sleep mode.
-          When enabled, the system will wake at wakeupTime and immediately start the update.
-          The schedule option is ignored when wakeup is enabled.
-        '';
-      };
-
-      wakeupTime = mkOption {
-        type = types.str;
-        default = "04:00";
-        example = "04:00";
-        description = ''
-          Time to wake up the system and run the update.
-          Format: HH:MM in 24-hour format.
-          This becomes the effective update time when wakeup is enabled.
+          When enabled, the system will wake at the time specified in 'schedule' and immediately start the update.
         '';
       };
 
@@ -298,19 +289,19 @@ in
 
       # Wakeup configuration script for systemd timer
       wakeupScript = pkgs.writeShellScript "setup-wakeup" ''
-        # Calculate seconds until next wakeup time
+        # Calculate seconds until next wakeup time using schedule
         current_time=$(date +%s)
-        wakeup_time=$(date -d "${cfg.wakeup.wakeupTime}" +%s 2>/dev/null || echo 0)
+        wakeup_time=$(date -d "${cfg.schedule}" +%s 2>/dev/null || echo 0)
         
         # If wakeup time is in the past today or invalid, schedule for tomorrow
         if [ $wakeup_time -le $current_time ]; then
-          wakeup_time=$(date -d "+1 day ${cfg.wakeup.wakeupTime}" +%s 2>/dev/null || date -d "tomorrow ${cfg.wakeup.wakeupTime}" +%s)
+          wakeup_time=$(date -d "+1 day ${cfg.schedule}" +%s 2>/dev/null || date -d "tomorrow ${cfg.schedule}" +%s)
         fi
         
         seconds_until_wakeup=$((wakeup_time - current_time))
         
         # Set RTC wake alarm
-        echo "Setting RTC wake alarm for ${cfg.wakeup.wakeupTime} (in $seconds_until_wakeup seconds)"
+        echo "Setting RTC wake alarm for ${cfg.schedule} (in $seconds_until_wakeup seconds)"
         echo 0 > /sys/class/rtc/rtc0/wakealarm
         echo $wakeup_time > /sys/class/rtc/rtc0/wakealarm
         

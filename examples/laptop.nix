@@ -10,10 +10,9 @@
     # Only update when on AC power
     onlyOnACPower = true;
     
-    # Wake up from sleep to perform updates
+    # Wake up from sleep to perform updates at the scheduled time
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";  # Wake 5 minutes before update
       autoSuspendAfter = true;  # Suspend again if no users logged in
     };
     
@@ -24,7 +23,7 @@
       timeout = 30000;  # 30 seconds
     };
     
-    schedule = "04:00";  # Update at 4 AM
+    schedule = "04:00";  # Wake up and update at 4 AM
     randomizedDelaySec = "30m";
   };
 }

@@ -108,10 +108,10 @@ else
     test_result 1 "Wakeup enable option defined"
 fi
 
-if grep -q "wakeupTime" module.nix; then
-    test_result 0 "Wakeup time option defined"
+if grep -q "schedule.*mkOption" module.nix; then
+    test_result 0 "Schedule option defined (used for wake-up time)"
 else
-    test_result 1 "Wakeup time option defined"
+    test_result 1 "Schedule option defined (used for wake-up time)"
 fi
 
 if grep -q "autoSuspendAfter" module.nix; then

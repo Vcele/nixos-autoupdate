@@ -44,7 +44,6 @@ Want automatic updates on your laptop with wake-up support and notifications? He
     # Wake up to update
     wakeup = {
       enable = true;
-      wakeupTime = "03:55";  # Wake 5 minutes before update
       autoSuspendAfter = true;  # Sleep again if no one's logged in
     };
     
@@ -53,7 +52,7 @@ Want automatic updates on your laptop with wake-up support and notifications? He
       enable = true;
     };
     
-    # Update at 4 AM daily
+    # Wake up and update at 4 AM daily
     schedule = "04:00";
   };
 }

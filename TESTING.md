@@ -188,10 +188,9 @@ Since this is a NixOS module, full integration testing requires a NixOS system. 
        localFlake = true;
        wakeup = {
          enable = true;
-         wakeupTime = "14:30";  # Set to a few minutes from now
          autoSuspendAfter = true;
        };
-       schedule = "14:35";  # 5 minutes after wakeup
+       schedule = "14:30";  # Set to a few minutes from now
      };
    }
    ```
@@ -299,7 +298,6 @@ Since this is a NixOS module, full integration testing requires a NixOS system. 
        
        wakeup = {
          enable = true;
-         wakeupTime = "03:55";
          autoSuspendAfter = true;
        };
        
