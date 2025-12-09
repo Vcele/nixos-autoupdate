@@ -310,12 +310,15 @@ in
 
       # Auto-suspend script
       autoSuspendScript = pkgs.writeShellScript "auto-suspend" ''
-        # Check if any users are logged in
-        if [ -z "$(${pkgs.systemd}/bin/loginctl list-users --no-legend)" ]; then
-          echo "No users logged in, suspending system after update..."
+        # Check if there are any active graphical sessions
+        # We check for sessions that are in "active" state, not just logged-in users
+        active_sessions=$(${pkgs.systemd}/bin/loginctl list-sessions --no-legend | ${pkgs.gawk}/bin/awk '$4 == "active" || $4 == "online" {print $1}' | wc -l)
+        
+        if [ "$active_sessions" -eq 0 ]; then
+          echo "No active sessions, suspending system after update..."
           ${pkgs.systemd}/bin/systemctl suspend
         else
-          echo "Users are logged in, not suspending."
+          echo "Active sessions found ($active_sessions), not suspending."
         fi
       '';
 
