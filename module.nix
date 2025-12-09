@@ -383,8 +383,18 @@ in
           # Add systemd inhibit lock when wakeup is enabled to prevent sleep during update
           (mkIf cfg.wakeup.enable {
             serviceConfig = {
-              # Acquire inhibit lock to prevent system from sleeping during update
-              ExecStartPre = "${pkgs.systemd}/bin/systemd-inhibit --what=sleep --who=nixos-upgrade --why='System update in progress' --mode=block ${pkgs.coreutils}/bin/true";
+              # Wrap the service with systemd-inhibit by overriding ExecStart
+              # We use mkForce to replace the default command with our wrapped version
+              ExecStart = let
+                flags = config.system.autoUpgrade.flags;
+                flakeArg = lib.optionalString (config.system.autoUpgrade.flake != null) 
+                  "--flake ${config.system.autoUpgrade.flake}";
+                nixos-rebuild = "${config.system.build.nixos-rebuild}/bin/nixos-rebuild";
+                inhibit = "${pkgs.systemd}/bin/systemd-inhibit";
+              in mkForce [
+                ""  # Empty string to clear previous definitions
+                "${inhibit} --what=sleep --who=nixos-upgrade --why='System update in progress' --mode=block ${nixos-rebuild} switch ${flakeArg} ${toString flags}"
+              ];
             };
           })
 
