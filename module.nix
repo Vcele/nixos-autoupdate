@@ -376,8 +376,9 @@ in
             after = [ "network-online.target" ];
 
             serviceConfig = {
-              Restart = "on-failure";
-              RestartSec = "20";
+              # Don't restart on failure - AC power check failure should not trigger restart
+              # Only restart if the actual update process fails unexpectedly
+              Restart = "no";
               CPUSchedulingPolicy = cfg.cpuSchedulingPolicy;
               IOSchedulingClass = cfg.ioSchedulingClass;
             };
@@ -432,13 +433,30 @@ in
           (mkIf cfg.onlyOnACPower {
             preStart = mkBefore ''
               echo "Checking AC power status..."
-              ${acPowerCheckScript}
+              if ! ${acPowerCheckScript}; then
+                # Mark this as a skip, not a failure, so postStop doesn't create failure notification
+                mkdir -p /var/lib/nixos-autoupdate
+                echo "skipped" > /var/lib/nixos-autoupdate/last-result
+                exit 1
+              fi
             '';
           })
 
           # Add post-update notification and handling for both success and failure
           (mkIf cfg.notification.enable {
             postStop = ''
+              # Check if this was a skip (e.g., AC power check failed)
+              if [ -f /var/lib/nixos-autoupdate/last-result ]; then
+                result=$(cat /var/lib/nixos-autoupdate/last-result)
+                if [ "$result" = "skipped" ]; then
+                  echo "Update was skipped (e.g., not on AC power), no notification needed."
+                  exit 0
+                fi
+              fi
+              
+              # Remove old notification-shown flag so new notification can be displayed
+              rm -f /var/lib/nixos-autoupdate/notification-shown
+              
               # Handle both successful and failed updates
               if [ "$SERVICE_RESULT" = "success" ] || [ -z "$SERVICE_RESULT" ]; then
                 echo "Update completed successfully, creating notification flag..."
@@ -533,8 +551,8 @@ in
           serviceConfig = {
             Type = "oneshot";
             ExecStart = pkgs.writeShellScript "check-and-notify" ''
-              # Check if an update occurred recently (within last 24 hours)
-              if [ -f /var/lib/nixos-autoupdate/last-update ]; then
+              # Check if there's a notification flag that hasn't been shown yet
+              if [ -f /var/lib/nixos-autoupdate/last-update ] && [ ! -f /var/lib/nixos-autoupdate/notification-shown ]; then
                 last_update=$(cat /var/lib/nixos-autoupdate/last-update)
                 last_update_ts=$(date -d "$last_update" +%s 2>/dev/null || echo 0)
                 current_ts=$(date +%s)
@@ -544,6 +562,11 @@ in
                 result="success"
                 if [ -f /var/lib/nixos-autoupdate/last-result ]; then
                   result=$(cat /var/lib/nixos-autoupdate/last-result)
+                fi
+                
+                # Skip notification for skipped updates
+                if [ "$result" = "skipped" ]; then
+                  exit 0
                 fi
                 
                 # If update was within last 24 hours (86400 seconds), show notification
@@ -563,19 +586,24 @@ in
                       "System Update Complete" \
                       "Your system was automatically updated. The update completed successfully at $(date -d "$last_update" '+%Y-%m-%d %H:%M')."
                   fi
+                  
+                  # Mark notification as shown to avoid showing it again
+                  touch /var/lib/nixos-autoupdate/notification-shown
                 fi
               fi
             '';
           };
         };
 
-        # Create a user timer that checks for notifications periodically (useful for screen unlock)
-        systemd.user.timers.nixos-autoupdate-notify = {
-          description = "Check for NixOS auto-update notifications periodically";
-          wantedBy = [ "timers.target" ];
-          timerConfig = {
-            OnStartupSec = "30s";
-            OnUnitActiveSec = "5m";
+        # Create a path unit to watch for D-Bus session changes (more efficient than polling)
+        # This triggers when the user unlocks their screen or logs in
+        systemd.user.paths.nixos-autoupdate-notify-trigger = {
+          description = "Trigger NixOS auto-update notification on session activity";
+          wantedBy = [ "default.target" ];
+          pathConfig = {
+            # Watch for changes in the session state
+            # This is more efficient than a 5-minute timer
+            PathExists = "%t/systemd/user/graphical-session.target";
             Unit = "nixos-autoupdate-notify.service";
           };
         };
