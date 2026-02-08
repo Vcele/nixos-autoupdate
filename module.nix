@@ -433,12 +433,14 @@ in
           (mkIf cfg.onlyOnACPower {
             preStart = mkBefore ''
               echo "Checking AC power status..."
+              mkdir -p /var/lib/nixos-autoupdate
               if ! ${acPowerCheckScript}; then
                 # Mark this as a skip, not a failure, so postStop doesn't create failure notification
-                mkdir -p /var/lib/nixos-autoupdate
                 echo "skipped" > /var/lib/nixos-autoupdate/last-result
                 exit 1
               fi
+              # AC power check passed - clear any previous skip status
+              rm -f /var/lib/nixos-autoupdate/last-result
             '';
           })
 
