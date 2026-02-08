@@ -287,6 +287,56 @@ in
         exit 1  # Not on AC power
       '';
 
+      # Network connectivity check script
+      networkCheckScript = pkgs.writeShellScript "check-network" ''
+        # Wait up to 5 minutes for network connectivity
+        max_wait=300  # 5 minutes in seconds
+        check_interval=5  # Check every 5 seconds
+        elapsed=0
+        
+        echo "Checking network connectivity (will wait up to 5 minutes)..."
+        
+        while [ $elapsed -lt $max_wait ]; do
+          # Try to check network connectivity using multiple methods
+          
+          # Method 1: Check if we can reach common DNS servers
+          if ${pkgs.iputils}/bin/ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            echo "Network connectivity confirmed (via ping to 8.8.8.8)"
+            exit 0
+          fi
+          
+          # Method 2: Check if we can reach 1.1.1.1
+          if ${pkgs.iputils}/bin/ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+            echo "Network connectivity confirmed (via ping to 1.1.1.1)"
+            exit 0
+          fi
+          
+          # Method 3: Try HTTP connectivity check using curl if available
+          if command -v ${pkgs.curl}/bin/curl >/dev/null 2>&1; then
+            if ${pkgs.curl}/bin/curl --connect-timeout 2 -s -o /dev/null https://nixos.org 2>/dev/null; then
+              echo "Network connectivity confirmed (via HTTP check)"
+              exit 0
+            fi
+          fi
+          
+          # If we get here, network is not ready yet
+          if [ $elapsed -eq 0 ]; then
+            echo "Network not ready, waiting..."
+          fi
+          
+          sleep $check_interval
+          elapsed=$((elapsed + check_interval))
+          
+          # Show progress every 30 seconds
+          if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "Still waiting for network... ($elapsed/$max_wait seconds)"
+          fi
+        done
+        
+        echo "Network connectivity check timed out after 5 minutes. Skipping update."
+        exit 1
+      '';
+
       # Wakeup configuration script for systemd timer
       wakeupScript = pkgs.writeShellScript "setup-wakeup" ''
         # Calculate seconds until next wakeup time using schedule
@@ -443,6 +493,19 @@ in
               rm -f /var/lib/nixos-autoupdate/last-result
             '';
           })
+
+          # Add network connectivity check (always enabled after network-online.target dependency)
+          {
+            preStart = mkBefore ''
+              echo "Verifying network connectivity..."
+              mkdir -p /var/lib/nixos-autoupdate
+              if ! ${networkCheckScript}; then
+                # Mark this as a skip, not a failure, so postStop doesn't create failure notification
+                echo "skipped" > /var/lib/nixos-autoupdate/last-result
+                exit 1
+              fi
+            '';
+          }
 
           # Add post-update notification and handling for both success and failure
           (mkIf cfg.notification.enable {
