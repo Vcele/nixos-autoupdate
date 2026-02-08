@@ -1,0 +1,25 @@
+# Nix
+result
+result-*
+
+# Note: flake.lock should typically be committed for reproducibility
+# Uncomment the following line if you want to ignore it
+# flake.lock
+
+# Temporary files
+*.backup
+*-old.md
+
+# Build artifacts
+.direnv/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
